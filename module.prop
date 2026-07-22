@@ -1,7 +1,7 @@
 id=spacewar-audio
 name=Spacewar Audio Stability
-version=1.2.2
-versionCode=122
+version=1.2.3
+versionCode=123
 author=EzerchE
-description=Stable NP1 crDroid software-A2DP protection with post-call resume safety; V4A, Dolby and mixer files remain untouched.
+description=Stable NP1 crDroid software-A2DP protection with post-call resume safety and reliable guardian startup; V4A, Dolby and mixer files remain untouched.
 updateJson=

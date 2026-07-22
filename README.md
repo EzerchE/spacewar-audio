@@ -19,9 +19,15 @@ This is an independent community workaround, not an official crDroid, Nothing, Q
 
 ## Install / rollback
 
-Install `spacewar-audio-v1.2.2.zip` from KernelSU and reboot. Disable or uninstall it from KernelSU to roll back. The module does not replace the system audio stack and does not require removing V4A or Dolby.
+Install `spacewar-audio-v1.2.3.zip` from KernelSU and reboot. Disable or uninstall it from KernelSU to roll back. The module does not replace the system audio stack and does not require removing V4A or Dolby.
 
 ## Changelog
+
+### 1.2.3
+
+- Retries guardian startup when the RT control interfaces become available shortly after `boot_completed`.
+- Confirms the guardian is running before ending the startup sequence.
+- Leaves the event-driven audio behavior unchanged.
 
 ### 1.2.2
 
