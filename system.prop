@@ -1,0 +1,5 @@
+# --- BT muzik: yazilimsal A2DP (donanim offload'da cizirti/kesilme sorunu) ---
+persist.bluetooth.a2dp_offload.disabled=true
+persist.bluetooth.leaudio_offload.disabled=false
+persist.vendor.bt.a2dp_offload_cap=sbc-aptx-aptxtws-aptxhd-aac-ldac
+persist.vendor.qcom.bluetooth.a2dp_offload_cap=sbc-aptx-aptxtws-aptxhd-aac-ldac-aptxadaptiver2
