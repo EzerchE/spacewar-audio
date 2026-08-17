@@ -38,17 +38,6 @@ jobs:
             bc bison flex gcc-aarch64-linux-gnu kmod libelf-dev \
             libssl-dev make pahole perl python3 rsync xz-utils zstd
 
-      - name: Download the matching Android clang prebuilt
-        run: |
-          set -euxo pipefail
-          mkdir -p toolchain
-          curl -L --fail --retry 3 \
-            "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/${CLANG_REPO_COMMIT}/${CLANG_DIR}.tar.gz" \
-            | tar -xz -C toolchain
-          toolchain/bin/clang --version | tee clang-version.txt
-          grep -F "Android (14054515" clang-version.txt
-          grep -F "clang version 21.0.0" clang-version.txt
-
       - name: Restore the installed-device kernel config
         run: |
           set -euxo pipefail
@@ -59,13 +48,27 @@ jobs:
           kernel/scripts/config --file kernel/out/.config \
             --disable LOCALVERSION_AUTO
 
-          export PATH="$GITHUB_WORKSPACE/toolchain/bin:$PATH"
           make -C kernel O="$GITHUB_WORKSPACE/kernel/out" \
             ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
           make -s -C kernel O="$GITHUB_WORKSPACE/kernel/out" \
             ARCH=arm64 LLVM=1 LLVM_IAS=1 kernelrelease \
             | tee reports/kernelrelease.txt
-          test "$(cat reports/kernelrelease.txt)" = "$EXPECTED_RELEASE"
+          ACTUAL_RELEASE="$(cat reports/kernelrelease.txt)"
+          if [ "$ACTUAL_RELEASE" != "$EXPECTED_RELEASE" ]; then
+            echo "::error title=Kernel release mismatch::expected=$EXPECTED_RELEASE actual=$ACTUAL_RELEASE"
+            exit 1
+          fi
+
+      - name: Download the matching Android clang prebuilt
+        run: |
+          set -euxo pipefail
+          mkdir -p toolchain
+          curl -L --fail --retry 3 \
+            "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/${CLANG_REPO_COMMIT}/${CLANG_DIR}.tar.gz" \
+            | tar -xz -C toolchain
+          toolchain/bin/clang --version | tee clang-version.txt
+          grep -F "Android (14054515" clang-version.txt
+          grep -F "clang version 21.0.0" clang-version.txt
 
       - name: Build the unmodified control kernel and modules
         run: |
