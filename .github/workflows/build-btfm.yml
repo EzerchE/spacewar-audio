@@ -114,7 +114,19 @@ jobs:
           CONTROL_BUILD_STATUS=${PIPESTATUS[0]}
           set -e
           if [ "$CONTROL_BUILD_STATUS" -ne 0 ]; then
-            CONTROL_BUILD_ERROR="$(tail -n 12 reports/control-build.log)"
+            CONTROL_BUILD_ERROR="$(grep -nE \
+              '(^|[[:space:]])(error:|fatal error:)|undefined reference|No rule to make target' \
+              reports/control-build.log | head -n 24 || true)"
+            if [ -z "$CONTROL_BUILD_ERROR" ]; then
+              CONTROL_BUILD_ERROR="$(tail -n 24 reports/control-build.log)"
+            fi
+            {
+              echo '## Control build failure'
+              echo
+              echo '```text'
+              printf '%s\n' "$CONTROL_BUILD_ERROR"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
             CONTROL_BUILD_ERROR="${CONTROL_BUILD_ERROR//'%'/'%25'}"
             CONTROL_BUILD_ERROR="${CONTROL_BUILD_ERROR//$'\r'/'%0D'}"
             CONTROL_BUILD_ERROR="${CONTROL_BUILD_ERROR//$'\n'/'%0A'}"
