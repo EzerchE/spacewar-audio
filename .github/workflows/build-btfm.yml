@@ -2,6 +2,9 @@ name: Build and ABI-check Spacewar BTFM patch
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - codex/btfm-abi-build-v3
 
 permissions:
   contents: read
