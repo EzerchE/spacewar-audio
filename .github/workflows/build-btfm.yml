@@ -115,7 +115,15 @@ jobs:
           path: toolchain
           key: android-clang-${{ env.CLANG_REPO_COMMIT }}-${{ env.CLANG_DIR }}
 
+      - name: Restore the unmodified control build
+        id: control-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: out
+          key: spacewar-control-${{ env.KERNEL_COMMIT }}-device-config-ksu-off-v1
+
       - name: Build the unmodified control kernel and modules
+        if: steps.control-cache.outputs.cache-hit != 'true'
         run: |
           set -uxo pipefail
           export PATH="$GITHUB_WORKSPACE/toolchain/bin:$PATH"
@@ -147,18 +155,32 @@ jobs:
             echo "::error title=Control kernel build failed::$CONTROL_BUILD_ERROR"
             exit "$CONTROL_BUILD_STATUS"
           fi
+
+      - name: Save the unmodified control build
+        if: steps.control-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: out
+          key: spacewar-control-${{ env.KERNEL_COMMIT }}-device-config-ksu-off-v1
+
+      - name: Stage the unmodified control BTFM module
+        run: |
+          set -euxo pipefail
           cp out/drivers/bluetooth/bt_fm_slim.ko \
             reports/bt_fm_slim-control.ko
 
       - name: Compare control module with the installed ABI
         run: |
-          set -euxo pipefail
+          set -uxo pipefail
           modinfo -F vermagic kernel-ci/input/bt_fm_slim-stock.ko \
             | tee reports/stock-vermagic.txt
           modinfo -F vermagic reports/bt_fm_slim-control.ko \
             | tee reports/control-vermagic.txt
+          set +e
           diff -u reports/stock-vermagic.txt reports/control-vermagic.txt \
-            | tee reports/vermagic.diff
+            > reports/vermagic.diff
+          VERMAGIC_STATUS=$?
 
           modprobe --dump-modversions kernel-ci/input/bt_fm_slim-stock.ko \
             | sort > reports/stock-symbol-versions.txt
@@ -166,7 +188,35 @@ jobs:
             | sort > reports/control-symbol-versions.txt
           diff -u reports/stock-symbol-versions.txt \
             reports/control-symbol-versions.txt \
-            | tee reports/symbol-versions.diff
+            > reports/symbol-versions.diff
+          SYMBOL_STATUS=$?
+          set -e
+
+          {
+            echo '## Control ABI comparison'
+            echo
+            echo "vermagic_match=$((VERMAGIC_STATUS == 0))"
+            echo "imported_symbol_crc_match=$((SYMBOL_STATUS == 0))"
+            echo
+            echo '### vermagic diff'
+            echo '```diff'
+            cat reports/vermagic.diff
+            echo '```'
+            echo '### imported-symbol CRC diff'
+            echo '```diff'
+            cat reports/symbol-versions.diff
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$VERMAGIC_STATUS" -ne 0 ] || [ "$SYMBOL_STATUS" -ne 0 ]; then
+            ABI_DIFF="$(cat reports/vermagic.diff reports/symbol-versions.diff \
+              | head -n 40)"
+            ABI_DIFF="${ABI_DIFF//'%'/'%25'}"
+            ABI_DIFF="${ABI_DIFF//$'\r'/'%0D'}"
+            ABI_DIFF="${ABI_DIFF//$'\n'/'%0A'}"
+            echo "::error title=Control module ABI mismatch::$ABI_DIFF"
+            exit 1
+          fi
 
       - name: Apply v3 and rebuild only BTFM
         run: |
