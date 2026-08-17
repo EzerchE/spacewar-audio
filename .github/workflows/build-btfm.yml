@@ -79,25 +79,48 @@ jobs:
             exit 1
           fi
 
+      - name: Cache the matching Android clang prebuilt
+        id: clang-cache
+        uses: actions/cache@v4
+        with:
+          path: toolchain
+          key: android-clang-${{ env.CLANG_REPO_COMMIT }}-${{ env.CLANG_DIR }}
+
       - name: Download the matching Android clang prebuilt
+        if: steps.clang-cache.outputs.cache-hit != 'true'
         run: |
           set -euxo pipefail
           mkdir -p toolchain
           curl -L --fail --retry 3 \
             "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/${CLANG_REPO_COMMIT}/${CLANG_DIR}.tar.gz" \
             | tar -xz -C toolchain
+      - name: Verify the matching Android clang prebuilt
+        run: |
+          set -euxo pipefail
           toolchain/bin/clang --version | tee clang-version.txt
           grep -F "Android (14054515" clang-version.txt
           grep -F "clang version 21.0.0" clang-version.txt
 
       - name: Build the unmodified control kernel and modules
         run: |
-          set -euxo pipefail
+          set -uxo pipefail
           export PATH="$GITHUB_WORKSPACE/toolchain/bin:$PATH"
+          set +e
           make -C kernel O="$GITHUB_WORKSPACE/out" \
             ARCH=arm64 LLVM=1 LLVM_IAS=1 \
             LOCALVERSION= \
-            -j"$(nproc)" Image modules
+            -j"$(nproc)" Image modules 2>&1 \
+            | tee reports/control-build.log
+          CONTROL_BUILD_STATUS=${PIPESTATUS[0]}
+          set -e
+          if [ "$CONTROL_BUILD_STATUS" -ne 0 ]; then
+            CONTROL_BUILD_ERROR="$(tail -n 12 reports/control-build.log)"
+            CONTROL_BUILD_ERROR="${CONTROL_BUILD_ERROR//'%'/'%25'}"
+            CONTROL_BUILD_ERROR="${CONTROL_BUILD_ERROR//$'\r'/'%0D'}"
+            CONTROL_BUILD_ERROR="${CONTROL_BUILD_ERROR//$'\n'/'%0A'}"
+            echo "::error title=Control kernel build failed::$CONTROL_BUILD_ERROR"
+            exit "$CONTROL_BUILD_STATUS"
+          fi
           cp out/drivers/bluetooth/bt_fm_slim.ko \
             reports/bt_fm_slim-control.ko
 
