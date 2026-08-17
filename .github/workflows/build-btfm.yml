@@ -49,11 +49,11 @@ jobs:
             --disable LOCALVERSION_AUTO
 
           make -C kernel O="$GITHUB_WORKSPACE/out" \
-            ARCH=arm64 olddefconfig
+            ARCH=arm64 LOCALVERSION= olddefconfig
           set +e
           KERNELRELEASE_OUTPUT="$(make -s -C kernel \
             O="$GITHUB_WORKSPACE/out" \
-            ARCH=arm64 kernelrelease 2>&1)"
+            ARCH=arm64 LOCALVERSION= kernelrelease 2>&1)"
           KERNELRELEASE_STATUS=$?
           set -e
           printf '%s\n' "$KERNELRELEASE_OUTPUT" \
@@ -96,6 +96,7 @@ jobs:
           export PATH="$GITHUB_WORKSPACE/toolchain/bin:$PATH"
           make -C kernel O="$GITHUB_WORKSPACE/out" \
             ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+            LOCALVERSION= \
             -j"$(nproc)" Image modules
           cp out/drivers/bluetooth/bt_fm_slim.ko \
             reports/bt_fm_slim-control.ko
@@ -132,6 +133,7 @@ jobs:
           export PATH="$GITHUB_WORKSPACE/toolchain/bin:$PATH"
           make -C kernel O="$GITHUB_WORKSPACE/out" \
             ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+            LOCALVERSION= \
             -j"$(nproc)" drivers/bluetooth/bt_fm_slim.ko
           cp out/drivers/bluetooth/bt_fm_slim.ko \
             reports/bt_fm_slim-v3.ko
