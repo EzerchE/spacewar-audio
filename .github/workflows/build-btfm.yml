@@ -72,7 +72,7 @@ jobs:
             echo "::error title=kernelrelease command failed::$KERNELRELEASE_ERROR"
             exit "$KERNELRELEASE_STATUS"
           fi
-          ACTUAL_RELEASE="$KERNELRELEASE_OUTPUT"
+          ACTUAL_RELEASE="$(printf '%s\n' "$KERNELRELEASE_OUTPUT" | tail -n 1)"
           printf '%s\n' "$ACTUAL_RELEASE" > reports/kernelrelease.txt
           if [ "$ACTUAL_RELEASE" != "$EXPECTED_RELEASE" ]; then
             echo "::error title=Kernel release mismatch::expected=$EXPECTED_RELEASE actual=$ACTUAL_RELEASE"
