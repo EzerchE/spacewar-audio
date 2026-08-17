@@ -50,10 +50,22 @@ jobs:
 
           make -C kernel O="$GITHUB_WORKSPACE/kernel/out" \
             ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
-          make -s -C kernel O="$GITHUB_WORKSPACE/kernel/out" \
-            ARCH=arm64 LLVM=1 LLVM_IAS=1 kernelrelease \
-            | tee reports/kernelrelease.txt
-          ACTUAL_RELEASE="$(cat reports/kernelrelease.txt)"
+          set +e
+          KERNELRELEASE_OUTPUT="$(make -s -C kernel \
+            O="$GITHUB_WORKSPACE/kernel/out" \
+            ARCH=arm64 LLVM=1 LLVM_IAS=1 kernelrelease 2>&1)"
+          KERNELRELEASE_STATUS=$?
+          set -e
+          printf '%s\n' "$KERNELRELEASE_OUTPUT" \
+            | tee reports/kernelrelease-command.txt
+          if [ "$KERNELRELEASE_STATUS" -ne 0 ]; then
+            KERNELRELEASE_LAST_LINE="$(printf '%s\n' "$KERNELRELEASE_OUTPUT" \
+              | tail -n 1 | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
+            echo "::error title=kernelrelease command failed::$KERNELRELEASE_LAST_LINE"
+            exit "$KERNELRELEASE_STATUS"
+          fi
+          ACTUAL_RELEASE="$KERNELRELEASE_OUTPUT"
+          printf '%s\n' "$ACTUAL_RELEASE" > reports/kernelrelease.txt
           if [ "$ACTUAL_RELEASE" != "$EXPECTED_RELEASE" ]; then
             echo "::error title=Kernel release mismatch::expected=$EXPECTED_RELEASE actual=$ACTUAL_RELEASE"
             exit 1
