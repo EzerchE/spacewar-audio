@@ -1,0 +1,159 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: EzerchE <noreply@github.com>
+Date: Mon, 17 Aug 2026 15:10:00 +0300
+Subject: [PATCH v3] Bluetooth: btfm_slim: wait for register access and retry
+
+The BTFM SLIMbus read helper logs transfer failures but always returns
+success. This lets vendor initialization succeed after failed IFD register
+access and causes the driver to cache an unusable enabled state. Later SCO
+channel setup then fails in SLIMBUS_7_RX/TX with -EIO.
+
+On Nothing Phone (1), the logical addresses can become available before IFD
+register access is ready. Propagate read failures and poll vendor
+initialization for a bounded 2.5 seconds, sleeping 20 ms between attempts.
+The wait runs only while starting BTFM hardware and exits immediately on
+success.
+
+Serialize the enabled check with initialization so simultaneous RX/TX DAI
+startup cannot both initialize the same hardware. Clear the cached state
+after a channel-prepare failure so a later startup can retry. Also avoid
+recursively removing the parent SLIM device from its own remove callback.
+
+Observed on Spacewar with kernel 5.4.302:
+
+  slimbus Read error
+  btfm_slim_read: failed (-5)
+  btfm_slim_write: failed (-5)
+  SLIMBUS_7_RX: ASoC: backend prepare failed -5
+  SLIMBUS_7_TX: ASoC: backend prepare failed -5
+
+Signed-off-by: EzerchE <noreply@github.com>
+---
+ drivers/bluetooth/btfm_slim.c       | 38 +++++++++++++++++++++++++------------
+ drivers/bluetooth/btfm_slim.h       |  3 ++-
+ drivers/bluetooth/btfm_slim_codec.c |  3 +++
+ 3 files changed, 31 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/bluetooth/btfm_slim.c b/drivers/bluetooth/btfm_slim.c
+index 46202a5..417efc0 100644
+--- a/drivers/bluetooth/btfm_slim.c
++++ b/drivers/bluetooth/btfm_slim.c
+@@ -98,14 +98,16 @@ int btfm_slim_read(struct btfmslim *btfmslim, unsigned short reg,
+ 		usleep_range(5000, 5100);
+ 	}
+ 
+-	if (ret)
++	if (ret) {
+ 		BTFMSLIM_ERR("failed (%d)", ret);
++		return ret;
++	}
+ 
+ 	for (i = 0; i < bytes; i++)
+ 		BTFMSLIM_DBG("Read 0x%02x from reg 0x%x", ((uint8_t *)dest)[i],
+ 			reg + i);
+ 
+-	return 0;
++	return ret;
+ }
+ 
+ int btfm_slim_read_pgd(struct btfmslim *btfmslim,
+@@ -417,6 +419,7 @@ int btfm_slim_hw_init(struct btfmslim *btfmslim)
+ {
+ 	int ret;
+ 	int chipset_ver;
++	unsigned long ready_timeout;
+ 	struct slim_device *slim;
+ 	struct slim_device *slim_ifd;
+ 
+@@ -424,15 +427,16 @@ int btfm_slim_hw_init(struct btfmslim *btfmslim)
+ 	if (!btfmslim)
+ 		return -EINVAL;
+ 
+-	if (btfmslim->enabled) {
+-		BTFMSLIM_DBG("Already enabled");
+-		return 0;
+-	}
+-
+ 	slim = btfmslim->slim_pgd;
+ 	slim_ifd = &btfmslim->slim_ifd;
+ 
+ 	mutex_lock(&btfmslim->io_lock);
++	if (btfmslim->enabled) {
++		BTFMSLIM_DBG("Already enabled");
++		ret = 0;
++		goto unlock;
++	}
++
+ 		BTFMSLIM_INFO(
+ 			"PGD Enum Addr: %.02x:%.02x:%.02x:%.02x:%.02x: %.02x",
+ 			slim->e_addr[0], slim->e_addr[1], slim->e_addr[2],
+@@ -535,14 +539,27 @@ int btfm_slim_hw_init(struct btfmslim *btfmslim)
+ 		goto error;
+ 
+ 	/* Start vendor specific initialization and get port information */
+-	if (btfmslim->vendor_init)
+-		ret = btfmslim->vendor_init(btfmslim);
++	if (btfmslim->vendor_init) {
++		ready_timeout = jiffies +
++			msecs_to_jiffies(SLIM_SLAVE_PRESENT_TIMEOUT);
++		do {
++			ret = btfmslim->vendor_init(btfmslim);
++			if (!ret || time_after_eq(jiffies, ready_timeout))
++				break;
++			usleep_range(SLIM_SLAVE_READY_RETRY_US,
++				SLIM_SLAVE_READY_RETRY_US + 1000);
++		} while (1);
++
++		if (ret)
++			goto error;
++	}
+ 
+ 	/* Only when all registers read/write successfully, it set to
+ 	 * enabled status
+ 	 */
+ 	btfmslim->enabled = 1;
+ error:
++unlock:
+ 	mutex_unlock(&btfmslim->io_lock);
+ 	return ret;
+ }
+@@ -744,9 +761,6 @@ static int btfm_slim_remove(struct slim_device *slim)
+ 	slim_remove_device(&btfm_slim->slim_ifd);
+ 
+ 	kfree(btfm_slim);
+-
+-	BTFMSLIM_DBG("slim_remove_device() - btfm_slim->slim_pgd");
+-	slim_remove_device(slim);
+ 	return 0;
+ }
+ 
+diff --git a/drivers/bluetooth/btfm_slim.h b/drivers/bluetooth/btfm_slim.h
+index 9a7e219..ee35d4d 100644
+--- a/drivers/bluetooth/btfm_slim.h
++++ b/drivers/bluetooth/btfm_slim.h
+@@ -23,7 +23,8 @@
+ 
+ /* Misc defines */
+ #define SLIM_SLAVE_RW_MAX_TRIES		3
+-#define SLIM_SLAVE_PRESENT_TIMEOUT	100
++#define SLIM_SLAVE_PRESENT_TIMEOUT	2500
++#define SLIM_SLAVE_READY_RETRY_US	20000
+ 
+ #define PGD	1
+ #define IFD	0
+diff --git a/drivers/bluetooth/btfm_slim_codec.c b/drivers/bluetooth/btfm_slim_codec.c
+index deafd9b..726523a 100644
+--- a/drivers/bluetooth/btfm_slim_codec.c
++++ b/drivers/bluetooth/btfm_slim_codec.c
+@@ -207,6 +207,9 @@ static int btfm_slim_dai_prepare(struct snd_pcm_substream *substream,
+ 
+ 	ret = btfm_slim_enable_ch(btfmslim, ch, rxport, dai->rate, grp, nchan);
+ 
++	if (ret && ret != -EISCONN)
++		btfm_slim_hw_deinit(btfmslim);
++
+ 	/* save the enable channel status */
+ 	if (ret == 0)
+ 		bt_soc_enable_status = 1;
+-- 
+2.50.1

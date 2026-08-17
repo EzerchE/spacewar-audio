@@ -1,0 +1,151 @@
+name: Build and ABI-check Spacewar BTFM patch
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      KERNEL_COMMIT: 2e3d68908518c45dabbfdd2b4fb5a439d487bc27
+      CLANG_REPO_COMMIT: 0a55d312e2778b09b54560a81dd231bc5f41086a
+      CLANG_DIR: clang-r563880c
+      EXPECTED_RELEASE: 5.4.302-qgki-g5e859c701541-dirty
+
+    steps:
+      - name: Check out build package
+        uses: actions/checkout@v4
+
+      - name: Check out the manifest kernel source
+        uses: actions/checkout@v4
+        with:
+          repository: crdroidandroid/android_kernel_nothing_sm7325
+          ref: ${{ env.KERNEL_COMMIT }}
+          fetch-depth: 1
+          path: kernel
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc bison flex gcc-aarch64-linux-gnu kmod libelf-dev \
+            libssl-dev make pahole perl python3 rsync xz-utils zstd
+
+      - name: Download the matching Android clang prebuilt
+        run: |
+          set -euxo pipefail
+          mkdir -p toolchain
+          curl -L --fail --retry 3 \
+            "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/${CLANG_REPO_COMMIT}/${CLANG_DIR}.tar.gz" \
+            | tar -xz -C toolchain
+          toolchain/bin/clang --version | tee clang-version.txt
+          grep -F "Android (14054515" clang-version.txt
+          grep -F "clang version 21.0.0" clang-version.txt
+
+      - name: Restore the installed-device kernel config
+        run: |
+          set -euxo pipefail
+          mkdir -p kernel/out reports
+          gzip -dc kernel-ci/input/device-config.gz > kernel/out/.config
+          kernel/scripts/config --file kernel/out/.config \
+            --set-str LOCALVERSION "-qgki-g5e859c701541-dirty"
+          kernel/scripts/config --file kernel/out/.config \
+            --disable LOCALVERSION_AUTO
+
+          export PATH="$GITHUB_WORKSPACE/toolchain/bin:$PATH"
+          make -C kernel O="$GITHUB_WORKSPACE/kernel/out" \
+            ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
+          make -s -C kernel O="$GITHUB_WORKSPACE/kernel/out" \
+            ARCH=arm64 LLVM=1 LLVM_IAS=1 kernelrelease \
+            | tee reports/kernelrelease.txt
+          test "$(cat reports/kernelrelease.txt)" = "$EXPECTED_RELEASE"
+
+      - name: Build the unmodified control kernel and modules
+        run: |
+          set -euxo pipefail
+          export PATH="$GITHUB_WORKSPACE/toolchain/bin:$PATH"
+          make -C kernel O="$GITHUB_WORKSPACE/kernel/out" \
+            ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+            -j"$(nproc)" Image modules
+          cp kernel/out/drivers/bluetooth/bt_fm_slim.ko \
+            reports/bt_fm_slim-control.ko
+
+      - name: Compare control module with the installed ABI
+        run: |
+          set -euxo pipefail
+          modinfo -F vermagic kernel-ci/input/bt_fm_slim-stock.ko \
+            | tee reports/stock-vermagic.txt
+          modinfo -F vermagic reports/bt_fm_slim-control.ko \
+            | tee reports/control-vermagic.txt
+          diff -u reports/stock-vermagic.txt reports/control-vermagic.txt \
+            | tee reports/vermagic.diff
+
+          modprobe --dump-modversions kernel-ci/input/bt_fm_slim-stock.ko \
+            | sort > reports/stock-symbol-versions.txt
+          modprobe --dump-modversions reports/bt_fm_slim-control.ko \
+            | sort > reports/control-symbol-versions.txt
+          diff -u reports/stock-symbol-versions.txt \
+            reports/control-symbol-versions.txt \
+            | tee reports/symbol-versions.diff
+
+      - name: Apply v3 and rebuild only BTFM
+        run: |
+          set -euxo pipefail
+          git -C kernel apply --check \
+            "$GITHUB_WORKSPACE/kernel-ci/input/0001-bluetooth-btfm-slim-ready-retry-v3.patch"
+          git -C kernel apply \
+            "$GITHUB_WORKSPACE/kernel-ci/input/0001-bluetooth-btfm-slim-ready-retry-v3.patch"
+          perl kernel/scripts/checkpatch.pl --no-tree \
+            kernel-ci/input/0001-bluetooth-btfm-slim-ready-retry-v3.patch \
+            | tee reports/checkpatch.txt || true
+
+          export PATH="$GITHUB_WORKSPACE/toolchain/bin:$PATH"
+          make -C kernel O="$GITHUB_WORKSPACE/kernel/out" \
+            ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+            -j"$(nproc)" drivers/bluetooth/bt_fm_slim.ko
+          cp kernel/out/drivers/bluetooth/bt_fm_slim.ko \
+            reports/bt_fm_slim-v3.ko
+
+      - name: Verify patched module ABI and create gated output
+        run: |
+          set -euxo pipefail
+          modinfo -F vermagic reports/bt_fm_slim-v3.ko \
+            | tee reports/patched-vermagic.txt
+          diff -u reports/stock-vermagic.txt reports/patched-vermagic.txt \
+            | tee reports/patched-vermagic.diff
+
+          modprobe --dump-modversions reports/bt_fm_slim-v3.ko \
+            | sort > reports/patched-symbol-versions.txt
+          diff -u reports/stock-symbol-versions.txt \
+            reports/patched-symbol-versions.txt \
+            | tee reports/patched-symbol-versions.diff
+
+          mkdir -p verified
+          cp reports/bt_fm_slim-v3.ko verified/
+          cp kernel-ci/input/0001-bluetooth-btfm-slim-ready-retry-v3.patch verified/
+          sha256sum verified/* | tee verified/SHA256SUMS
+          printf '%s\n' \
+            'ABI_MATCH=1' \
+            'This output passed vermagic and imported-symbol CRC comparison.' \
+            > verified/VERIFIED.txt
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: spacewar-btfm-build-diagnostics
+          path: |
+            clang-version.txt
+            reports/
+          if-no-files-found: warn
+
+      - name: Upload ABI-gated module
+        uses: actions/upload-artifact@v4
+        with:
+          name: spacewar-btfm-v3-abi-verified
+          path: verified/
+          if-no-files-found: error
