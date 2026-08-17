@@ -41,18 +41,18 @@ jobs:
       - name: Restore the installed-device kernel config
         run: |
           set -euxo pipefail
-          mkdir -p kernel/out reports
-          gzip -dc kernel-ci/input/device-config.gz > kernel/out/.config
-          kernel/scripts/config --file kernel/out/.config \
+          mkdir -p out reports
+          gzip -dc kernel-ci/input/device-config.gz > out/.config
+          kernel/scripts/config --file out/.config \
             --set-str LOCALVERSION "-qgki-g5e859c701541-dirty"
-          kernel/scripts/config --file kernel/out/.config \
+          kernel/scripts/config --file out/.config \
             --disable LOCALVERSION_AUTO
 
-          make -C kernel O="$GITHUB_WORKSPACE/kernel/out" \
+          make -C kernel O="$GITHUB_WORKSPACE/out" \
             ARCH=arm64 olddefconfig
           set +e
           KERNELRELEASE_OUTPUT="$(make -s -C kernel \
-            O="$GITHUB_WORKSPACE/kernel/out" \
+            O="$GITHUB_WORKSPACE/out" \
             ARCH=arm64 kernelrelease 2>&1)"
           KERNELRELEASE_STATUS=$?
           set -e
@@ -94,10 +94,10 @@ jobs:
         run: |
           set -euxo pipefail
           export PATH="$GITHUB_WORKSPACE/toolchain/bin:$PATH"
-          make -C kernel O="$GITHUB_WORKSPACE/kernel/out" \
+          make -C kernel O="$GITHUB_WORKSPACE/out" \
             ARCH=arm64 LLVM=1 LLVM_IAS=1 \
             -j"$(nproc)" Image modules
-          cp kernel/out/drivers/bluetooth/bt_fm_slim.ko \
+          cp out/drivers/bluetooth/bt_fm_slim.ko \
             reports/bt_fm_slim-control.ko
 
       - name: Compare control module with the installed ABI
@@ -130,10 +130,10 @@ jobs:
             | tee reports/checkpatch.txt || true
 
           export PATH="$GITHUB_WORKSPACE/toolchain/bin:$PATH"
-          make -C kernel O="$GITHUB_WORKSPACE/kernel/out" \
+          make -C kernel O="$GITHUB_WORKSPACE/out" \
             ARCH=arm64 LLVM=1 LLVM_IAS=1 \
             -j"$(nproc)" drivers/bluetooth/bt_fm_slim.ko
-          cp kernel/out/drivers/bluetooth/bt_fm_slim.ko \
+          cp out/drivers/bluetooth/bt_fm_slim.ko \
             reports/bt_fm_slim-v3.ko
 
       - name: Verify patched module ABI and create gated output
