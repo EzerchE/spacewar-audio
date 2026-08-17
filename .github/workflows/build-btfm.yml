@@ -58,10 +58,18 @@ jobs:
           set -e
           printf '%s\n' "$KERNELRELEASE_OUTPUT" \
             | tee reports/kernelrelease-command.txt
+          {
+            echo '## kernelrelease diagnostic'
+            echo
+            echo '```text'
+            printf '%s\n' "$KERNELRELEASE_OUTPUT"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
           if [ "$KERNELRELEASE_STATUS" -ne 0 ]; then
-            KERNELRELEASE_LAST_LINE="$(printf '%s\n' "$KERNELRELEASE_OUTPUT" \
-              | tail -n 1 | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
-            echo "::error title=kernelrelease command failed::$KERNELRELEASE_LAST_LINE"
+            KERNELRELEASE_ERROR="${KERNELRELEASE_OUTPUT//'%'/'%25'}"
+            KERNELRELEASE_ERROR="${KERNELRELEASE_ERROR//$'\r'/'%0D'}"
+            KERNELRELEASE_ERROR="${KERNELRELEASE_ERROR//$'\n'/'%0A'}"
+            echo "::error title=kernelrelease command failed::$KERNELRELEASE_ERROR"
             exit "$KERNELRELEASE_STATUS"
           fi
           ACTUAL_RELEASE="$KERNELRELEASE_OUTPUT"
