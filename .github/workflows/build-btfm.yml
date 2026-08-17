@@ -49,11 +49,11 @@ jobs:
             --disable LOCALVERSION_AUTO
 
           make -C kernel O="$GITHUB_WORKSPACE/kernel/out" \
-            ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
+            ARCH=arm64 olddefconfig
           set +e
           KERNELRELEASE_OUTPUT="$(make -s -C kernel \
             O="$GITHUB_WORKSPACE/kernel/out" \
-            ARCH=arm64 LLVM=1 LLVM_IAS=1 kernelrelease 2>&1)"
+            ARCH=arm64 kernelrelease 2>&1)"
           KERNELRELEASE_STATUS=$?
           set -e
           printf '%s\n' "$KERNELRELEASE_OUTPUT" \
