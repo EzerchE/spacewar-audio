@@ -48,6 +48,13 @@ jobs:
           kernel/scripts/config --file out/.config \
             --disable LOCALVERSION_AUTO
 
+          # The public manifest commit lacks two dirty-tree KernelSU/SUSFS
+          # fixes present in the installed build. BTFM does not depend on
+          # KernelSU; disable it only in this reproducibility build and let
+          # the imported-symbol CRC gate decide whether the result is usable.
+          kernel/scripts/config --file out/.config \
+            --disable KSU
+
           make -C kernel O="$GITHUB_WORKSPACE/out" \
             ARCH=arm64 LOCALVERSION= olddefconfig
           set +e
@@ -79,9 +86,9 @@ jobs:
             exit 1
           fi
 
-      - name: Cache the matching Android clang prebuilt
+      - name: Restore the matching Android clang prebuilt
         id: clang-cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: toolchain
           key: android-clang-${{ env.CLANG_REPO_COMMIT }}-${{ env.CLANG_DIR }}
@@ -100,6 +107,13 @@ jobs:
           toolchain/bin/clang --version | tee clang-version.txt
           grep -F "Android (14054515" clang-version.txt
           grep -F "clang version 21.0.0" clang-version.txt
+
+      - name: Save the matching Android clang prebuilt
+        if: steps.clang-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: toolchain
+          key: android-clang-${{ env.CLANG_REPO_COMMIT }}-${{ env.CLANG_DIR }}
 
       - name: Build the unmodified control kernel and modules
         run: |
