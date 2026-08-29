@@ -8,9 +8,11 @@ EVENT_PID_FILE="$MODDIR/event-listener.pid"
 FIFO_FILE="$MODDIR/events.fifo"
 LOG_FILE="$MODDIR/guardian.log"
 STATE_FILE="$MODDIR/stream.state"
+CALL_STATE_FILE="$MODDIR/call.state"
 GENERATION_FILE="$MODDIR/event.generation"
 CODEC_FILE="$MODDIR/codec.state"
 UNDERFLOW_FILE="$MODDIR/underflow.count"
+SCO_FAILURE_FILE="$MODDIR/sco-failure.count"
 LAST_MEDIA_APPLY_FILE="$MODDIR/last-media-apply"
 TEST_FLOOR_FILE="$MODDIR/test-floor.state"
 MODE=${1:-status}
@@ -21,6 +23,7 @@ START_BURST_DELAYS="1 3 10"
 MEDIA_APPLY_DEBOUNCE_SECONDS=2
 MEDIA_REAPPLY_DELAY_SECONDS=1
 EVENT_RESTART_DELAY_SECONDS=5
+CALL_PROFILE_BURST_DELAYS="0 1 3"
 MAX_LOG_SIZE_KB=256
 LOG_THREAD_MOVES=0
 UNDERFLOW_PERSIST_EVERY=8
@@ -230,8 +233,64 @@ set_stream_active() {
   [ "$PREVIOUS_STATE" = active ] || log_message "A2DP stream active; event-driven protection enabled."
 }
 
+is_call_active() {
+  [ "$(cat "$CALL_STATE_FILE" 2>/dev/null)" = active ]
+}
+
+schedule_call_profile_burst() {
+  (
+    for DELAY_SECONDS in $CALL_PROFILE_BURST_DELAYS; do
+      sleep "$DELAY_SECONDS"
+      is_call_active || exit 0
+      activate_rt_group
+      apply_core_profile
+    done
+  ) &
+}
+
+set_call_active() {
+  PREVIOUS_CALL_STATE=$(cat "$CALL_STATE_FILE" 2>/dev/null)
+  printf '%s\n' active > "$CALL_STATE_FILE"
+  [ "$PREVIOUS_CALL_STATE" = active ] && return
+  log_message "Phone call active; preserving audio RT placement during SCO setup."
+  activate_rt_group
+  apply_core_profile
+  schedule_call_profile_burst
+}
+
+set_call_idle() {
+  PREVIOUS_CALL_STATE=$(cat "$CALL_STATE_FILE" 2>/dev/null)
+  printf '%s\n' idle > "$CALL_STATE_FILE"
+  [ "$PREVIOUS_CALL_STATE" = active ] || return
+  log_message "Phone call ended; waiting for A2DP route settlement."
+  (
+    sleep 5
+    is_call_active && exit 0
+    [ "$(cat "$STATE_FILE" 2>/dev/null)" = active ] && exit 0
+    printf '%s\n' idle > "$STATE_FILE"
+    restore_idle_rt_group
+    log_message "Post-call route idle; restored captured RT defaults."
+  ) &
+}
+
+record_sco_failure() {
+  SCO_FAILURE_COUNT=$(cat "$SCO_FAILURE_FILE" 2>/dev/null)
+  case "$SCO_FAILURE_COUNT" in ''|*[!0-9]*) SCO_FAILURE_COUNT=0 ;; esac
+  SCO_FAILURE_COUNT=$((SCO_FAILURE_COUNT + 1))
+  printf '%s\n' "$SCO_FAILURE_COUNT" > "$SCO_FAILURE_FILE"
+  if is_call_active; then
+    activate_rt_group
+    apply_core_profile
+  fi
+  log_message "Observed kernel BTFM/SLIMbus SCO setup failure #$SCO_FAILURE_COUNT."
+}
+
 schedule_stream_idle() {
   [ "$(cat "$STATE_FILE" 2>/dev/null)" = active ] || return
+  if is_call_active; then
+    log_message "A2DP suspended for active phone call; idle restore suppressed."
+    return
+  fi
   persist_underflow_count
   next_generation
   IDLE_GENERATION=$GENERATION
@@ -241,6 +300,7 @@ schedule_stream_idle() {
     sleep "$IDLE_GRACE_SECONDS"
     [ "$(cat "$GENERATION_FILE" 2>/dev/null)" = "$IDLE_GENERATION" ] || exit 0
     [ "$(cat "$STATE_FILE" 2>/dev/null)" = grace ] || exit 0
+    is_call_active && exit 0
     printf '%s\n' idle > "$STATE_FILE"
     restore_idle_rt_group
     log_message "A2DP idle; restored captured RT defaults."
@@ -272,10 +332,15 @@ handle_event() {
     *"bta2dp_audio_config_callback"*"codec: "*) record_codec "$EVENT_LINE" ;;
   esac
   case "$EVENT_LINE" in
+    *"SET_DIALING"*|*"SET_RINGING"*|*"SET_ACTIVE"*|*"CALL_STATE_OFFHOOK"*|*"CALL_STATE_RINGING"*) set_call_active ;;
+    *"SET_DISCONNECTED"*|*"CALL_STATE_IDLE"*) set_call_idle ;;
+  esac
+  case "$EVENT_LINE" in
     *"BTAV_AUDIO_STATE_STARTED"*|*"Connected: started playing:"*) set_stream_active ;;
     *"BTAV_AUDIO_STATE_STOPPED"*|*"Connected: stopped playing:"*|*"ON A2DP SUSPENDED"*) schedule_stream_idle ;;
     *"A2DP_SOFTWARE_ENCODING_DATAPATH"*"SetUp:"*|*"A2DP_SOFTWARE_ENCODING_DATAPATH"*"Start:"*) apply_core_profile ;;
-    *"UNDERFLOW:"*|*"underflow "*) record_underflow ;;
+    *"UNDERFLOW:"*|*"underflow "*|*"BUFFER TIMEOUT"*) record_underflow; [ "$(cat "$STATE_FILE" 2>/dev/null)" = active ] && apply_active_profile ;;
+    *"btfm_slim"*"failed"*|*"SLIMBUS_7"*"failed"*|*"SLIMBUS_7"*"BE open failed"*) record_sco_failure ;;
   esac
 }
 
@@ -292,6 +357,8 @@ detect_initial_stream_state() {
     printf '%s\n' idle > "$STATE_FILE"
     restore_idle_rt_group
   fi
+  printf '%s\n' idle > "$CALL_STATE_FILE"
+  [ -f "$SCO_FAILURE_FILE" ] || printf '%s\n' 0 > "$SCO_FAILURE_FILE"
 }
 
 cleanup_listener() {
@@ -303,11 +370,14 @@ cleanup_listener() {
 run_event_listener() {
   rm -f "$FIFO_FILE"
   mkfifo "$FIFO_FILE" || return 1
-  # Keep the resident listener deliberately narrow. Codec, activity and power
-  # tags are very noisy on this ROM and caused measurable shell/fork pressure
-  # during UI transitions. Bluetooth stream events plus the finite start burst
-  # are sufficient to place newly-created media/audio threads.
-  logcat -b main,system -T 1 -v brief 'bluetooth-a2dp:I' 'A2dpStateMachine:I' 'BTAudioHalDeviceProxyAIDL:I' 'BTAudioSessionAidl:I' '*:S' > "$FIFO_FILE" 2>/dev/null &
+  # Filter in logcat itself so Telecom's verbose call log never reaches the
+  # shell loop. Only stream transitions, actual underruns and SCO backend
+  # failures are delivered to the event handler.
+  logcat -b main,system,kernel -T 1 -v brief \
+    --regex='BTAV_AUDIO_STATE_(STARTED|STOPPED)|Connected: (started|stopped) playing:|ON A2DP SUSPENDED|A2DP_SOFTWARE_ENCODING_DATAPATH|codec: |UNDERFLOW:|underflow |BUFFER TIMEOUT|SET_(DIALING|RINGING|ACTIVE|DISCONNECTED)|CALL_STATE_(OFFHOOK|RINGING|IDLE)|btfm_slim.*failed|SLIMBUS_7.*(failed|BE open failed)' \
+    'bluetooth-a2dp:I' 'A2dpStateMachine:I' 'BTAudioHalDeviceProxyAIDL:I' 'BTAudioSessionAidl:I' \
+    'AudioFlinger:W' 'AudioTrack:W' 'Telecom:I' 'TelecomFramework:I' 'TelephonyManager:I' 'kernel:W' '*:S' \
+    > "$FIFO_FILE" 2>/dev/null &
   printf '%s\n' "$!" > "$EVENT_PID_FILE"
   while IFS= read -r EVENT_LINE; do handle_event "$EVENT_LINE"; done < "$FIFO_FILE"
   cleanup_listener
@@ -325,6 +395,7 @@ run_guardian() {
   esac
   PROTECTED_THREAD_COUNT=0
   printf '%s\n' unknown > "$STATE_FILE"
+  printf '%s\n' idle > "$CALL_STATE_FILE"
   ensure_a2dp_offload_disabled
   detect_initial_stream_state
   log_message "Guardian started in event-driven mode."
@@ -376,8 +447,10 @@ show_status() {
   if is_running; then echo "Guardian is running with pid=$GUARDIAN_PID."; else echo "Guardian is not running."; fi
   echo "mode=event-driven"
   echo "stream_state=$(cat "$STATE_FILE" 2>/dev/null)"
+  echo "call_state=$(cat "$CALL_STATE_FILE" 2>/dev/null)"
   echo "codec=$(cat "$CODEC_FILE" 2>/dev/null)"
   echo "underflow_events=$(cat "$UNDERFLOW_FILE" 2>/dev/null)"
+  echo "sco_setup_failures=$(cat "$SCO_FAILURE_FILE" 2>/dev/null)"
   echo "thread_move_logging=$LOG_THREAD_MOVES"
   echo "configured_rt_min=$RT_UCLAMP_MIN"
   echo "effective_rt_min=$(effective_rt_floor)"
