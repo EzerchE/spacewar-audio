@@ -1,4 +1,30 @@
-# Spacewar Audio Stability
+# Spacewar Audio Stability — LEGACY / ARCHIVED
+
+> **No longer maintained. Not recommended for new installations or newer ROMs.**
+> This repository and its releases are retained publicly for historical reference
+> and rollback research. They are not a current, universally compatible audio fix.
+
+## Retirement status — 28 September 2026
+
+After a newer crDroid update, the maintainer reported a successful Bluetooth
+headset call and no crackling when opening Tapo with this module disabled after
+reboot. The module's guardian and audio overlays were confirmed inactive.
+That limited observation is not proof that every intermittent problem is fixed
+on every device; ordinary-use validation is still required.
+
+The old ROM-specific audio-policy and mixer overlays may conflict with newer
+ROM changes. Leave the module disabled when native audio works. Archiving this
+repository does not remove or alter an installed module, and existing release
+downloads remain available. No replacement audio module is being recommended.
+
+**Türkçe:** Bu depo artık geliştirilmiyor ve yeni kurulumlar için önerilmiyor.
+Eski sürümler inceleme ve geri dönüş referansı olarak korunuyor. Yeni ROM'da ses
+çalışıyorsa modülü kapalı bırakın; arşivleme telefondaki kurulumu değiştirmez.
+
+The documentation below describes historical releases, not a current installation
+recommendation. See [LEGACY.md](LEGACY.md) for the maintenance policy.
+
+---
 
 KernelSU module for the Nothing Phone (1) (`Spacewar`) running crDroid 12 / Android 16.
 
