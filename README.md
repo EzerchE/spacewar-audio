@@ -1,99 +1,57 @@
-# Spacewar Audio Stability — LEGACY / ARCHIVED
+# Spacewar Audio Policy
 
-> **No longer maintained. Not recommended for new installations or newer ROMs.**
-> This repository and its releases are retained publicly for historical reference
-> and rollback research. They are not a current, universally compatible audio fix.
+Version 1.3.0 is a limited policy-only maintenance release for the Nothing Phone (1)
+(`Spacewar` / `A063`) running the supported crDroid 12.12 / Android 16 baseline
+(2026-09-25). It is not a general audio fix or a promise of support for future ROMs.
 
-## Retirement status — 28 September 2026
+## Purpose
 
-After a newer crDroid update, the maintainer reported a successful Bluetooth
-headset call and no crackling when opening Tapo with this module disabled after
-reboot. The module's guardian and audio overlays were confirmed inactive.
-That limited observation is not proof that every intermittent problem is fixed
-on every device; ordinary-use validation is still required.
+The supported software-A2DP policy references an input-policy file absent from
+that ROM. This module removes that single include and retains the existing
+software-A2DP property configuration. The remaining ROM policy is unchanged.
 
-The old ROM-specific audio-policy and mixer overlays may conflict with newer
-ROM changes. Leave the module disabled when native audio works. Archiving this
-repository does not remove or alter an installed module, and existing release
-downloads remain available. No replacement audio module is being recommended.
+Bluetooth calls, music playback, speaker handoff and volume control have been
+validated on this baseline. Other ROM builds and long-term reliability have not
+been established. Install only when this specific workaround is needed.
 
-**Türkçe:** Bu depo artık geliştirilmiyor ve yeni kurulumlar için önerilmiyor.
-Eski sürümler inceleme ve geri dönüş referansı olarak korunuyor. Yeni ROM'da ses
-çalışıyorsa modülü kapalı bırakın; arşivleme telefondaki kurulumu değiştirmez.
+## Compatibility
 
-The documentation below describes historical releases, not a current installation
-recommendation. See [LEGACY.md](LEGACY.md) for the maintenance policy.
+Installation requires Spacewar/A063, Android 16/API 36, the exact original policy
+SHA-256 `c17b85f06f23432ec412dbaed6211bfc57476276fe8c15f453f3350f26b6e537`
+(or the exact patched policy
+`ad2cb00ca2db53716f2ba301702c9148dc95a42bfb9196400b47220cbd47551c`), and
+`/vendor/etc/a2dp_in_audio_policy_configuration.xml` to remain absent.
 
----
+The same compatibility checks run at boot. An incompatible policy is not mounted.
+This guard controls the policy overlay; the module's static Bluetooth properties
+remain configured while the module is enabled.
+After a ROM update, disable the module and reboot unless the new build has been
+explicitly verified as supported.
 
-KernelSU module for the Nothing Phone (1) (`Spacewar`) running crDroid 12 / Android 16.
+## Install and remove
 
-## What it does
+1. Download `spacewar-audio-v1.3.0.zip` and its `.sha256` file from the release.
+2. Verify the ZIP checksum, install through KernelSU, and reboot.
+3. If audio behavior worsens, disable or uninstall the module in KernelSU and reboot.
 
-`spacewar-audio` addresses intermittent Bluetooth A2DP crackling and dropouts by keeping the affected media path in software mode and applying an event-driven scheduling assist only while Bluetooth media is active.
+Disabling or uninstalling followed by a reboot restores the ROM policy and stops
+applying this module's properties. No manual cache clearing is required.
 
-Version 1.2.6 keeps the 1.2.5 media profile and the locally tested SCO recovery combination. Its mixer file is rebased from the installed ROM and prevents media PCM paths from claiming `SLIMBUS_7` during HFP/SCO setup; native voice-call routes are left intact. Call-aware scheduling is enabled only for the duration of a call.
+Dolby and ViPER4Android apps, settings and presets are preserved. Version 1.3.0
+contains no mixer override, audio guardian, RT tuning, telemetry or log collector.
 
-## Scope and safety
+## Changes in 1.3.0
 
-- V4A and Dolby packages, settings and presets are not removed or rewritten.
-- The module overlays the A2DP software policy and the current-ROM
-  `mixer_paths_yupikqrd.xml`; 22 media-only SCO controls are disabled while
-  native voice-call SCO RX/TX routes remain present. Disabling the module
-  restores both ROM files.
-- No resident polling loop is used while the device is idle.
-- The module is reversible through KernelSU.
-- It was created and tested specifically on Spacewar. Testing on another device is appropriate only when its Bluetooth/audio stack and symptoms are genuinely similar; compatibility is not guaranteed.
+- Retains software A2DP and the one-line input-policy correction.
+- Removes guardian scheduling, call/media listeners and mixer overrides.
+- Adds exact-baseline installation and boot compatibility checks.
 
-This is an independent community workaround, not an official crDroid, Nothing, Qualcomm or Android fix. Use it at your own risk and keep a recovery path before testing.
+Historical releases are legacy, remain available in the release history, and are
+not recommendations for newer firmware. This repository is archived outside this
+limited maintenance publication; broad future compatibility updates are not promised.
 
-## Install / rollback
+## Build
 
-Install `spacewar-audio-v1.2.6.zip` from KernelSU and reboot. Disable or uninstall it from KernelSU to roll back. The module does not replace the system audio stack and does not require removing V4A or Dolby.
-
-The Bluetooth HFP/SCO failure is timing-sensitive and originates below the app
-layer. This release is a tested mitigation for the maintainer's Spacewar, not a
-guarantee for every ROM/kernel build. If call audio is worse after installation,
-disable the module and reboot before collecting logs.
-
-## Changelog
-
-### 1.2.6
-
-- Rebased the previously successful Spacewar SCO mixer workaround onto the currently installed ROM mixer.
-- Disabled only media playback/record controls that compete for `SLIMBUS_7`; retained native voice-call SCO RX/TX paths.
-- Restored bounded call-aware RT protection from the last working local configuration.
-- Kept the 1.2.5 deep-buffer media profile, volume-policy correction and V4A/Dolby compatibility.
-- Passed repeated Bluetooth media, call, volume-control and disconnect tests,
-  including first-call tests after controlled reboots on the target device.
-
-### 1.2.5-local
-
-- Removed the ineffective call-aware scheduling and Telecom/kernel log listener added in 1.2.4-local.
-- Kept software A2DP, the invalid A2DP-input include correction and active-only 30 percent RT floor.
-- Changed deep buffer from `FAST|DEEP_BUFFER` to `DEEP_BUFFER` only, matching the earlier stable media profile and favoring continuity over low latency.
-- Kept narrowly filtered underrun recovery; idle still restores the ROM defaults.
-
-### 1.2.4-local
-
-- Rebased the one-line volume-policy correction onto the installed 2026-08-11 ROM policy, retaining `AUDIO_OUTPUT_FLAG_FAST|AUDIO_OUTPUT_FLAG_DEEP_BUFFER`.
-- Raised the active-only RT utilization floor to the previously tested 30 percent profile; idle still restores the ROM default.
-- Added narrowly filtered AudioFlinger underrun recovery without an idle polling loop.
-- Added call-aware SCO transition protection and bounded call-start thread-placement bursts.
-- Added persistent counting of kernel `btfm_slim` / `SLIMBUS_7` setup failures.
-
-### 1.2.3
-
-- Retries guardian startup when the RT control interfaces become available shortly after `boot_completed`.
-- Confirms the guardian is running before ending the startup sequence.
-- Leaves the event-driven audio behavior unchanged.
-
-### 1.2.2
-
-- Added safer A2DP resume handling after HFP/SCO calls.
-- Preserved the tested media protection without reapplying core audio thread placement during the post-call grace window.
-- No changes to V4A, Dolby, mixer or notification behavior.
-
-### 1.2.0
-
-- Initial public event-driven A2DP stability release.
+Run `python build.py`. The deterministic ZIP and SHA-256 file are written to
+`dist/`. Run `python -m unittest discover -s tests -v` with Git Bash available to
+validate shell syntax, compatibility guards, XML and package contents.

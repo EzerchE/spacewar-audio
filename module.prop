@@ -1,7 +1,7 @@
 id=spacewar-audio
-name=Spacewar Audio Stability
-version=1.2.6
-versionCode=126
-author=EzerchE
-description=Spacewar crDroid audio stability profile for software A2DP, volume-policy recovery and reduced SLIMBUS_7 contention during HFP/SCO setup.
+name=Spacewar Audio Policy
+version=1.3.0
+versionCode=130
+author=Spacewar Audio contributors
+description=Policy-only maintenance for the supported Spacewar Android 16 baseline; preserves software A2DP and corrects the missing input-policy include.
 updateJson=
